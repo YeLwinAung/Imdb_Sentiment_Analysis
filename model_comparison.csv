@@ -1,0 +1,5 @@
+Model,Category,Accuracy,Precision,Recall,F1 Score
+Naive Bayes,Machine Learning,0.8545,0.8546,0.8545,0.8545
+Logistic Regression,Machine Learning,0.891,0.8911,0.891,0.891
+LSTM,Artificial Neural Network,0.6254,0.7451,0.6254,0.5733
+DistilBERT,Transformer,0.8932,0.8947,0.8932,0.8931
