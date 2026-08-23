@@ -1,12 +1,9 @@
-sentiment_Analysis/
-│
-├── README.md
-├── requirements.txt
-├── main.py
-│
-├── app/
-│   ├── app.py
-│   ├── predictor.py
-│   └── utils.py
-│
-└── src/
+streamlit
+pandas
+numpy
+scikit-learn
+nltk
+tensorflow==2.20.0
+torch
+transformers
+safetensors
