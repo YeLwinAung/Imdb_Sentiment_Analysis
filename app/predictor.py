@@ -20,6 +20,9 @@ from app.utils import calibrate_probability, clean_text, derive_sentiment_label
 
 # Directory constants and sequence length boundaries
 MODEL_DIR: str = os.path.join(BASE_DIR, "models")
+DISTILBERT_DIR: str = os.path.join(MODEL_DIR, "distilbert_model")
+SARCASM_DIR: str = os.path.join(MODEL_DIR, "roberta_sarcasm")
+
 MAX_SEQUENCE_LENGTH: int = 200
 BERT_MAX_LENGTH: int = 128
 
@@ -43,16 +46,14 @@ logistic_model = _load_pickle("logistic_regression_model.pkl")
 lstm_model = load_model(os.path.join(MODEL_DIR, "lstm_model.keras"))
 lstm_tokenizer = _load_pickle("tokenizer.pkl")
 
-# Load Transformer Sentiment Artifacts
-bert_path: str = os.path.join(MODEL_DIR, "distilbert_model")
-bert_tokenizer = AutoTokenizer.from_pretrained(bert_path)
-bert_model = AutoModelForSequenceClassification.from_pretrained(bert_path)
+# Load Transformer Sentiment Artifacts (Step 4)
+bert_tokenizer = AutoTokenizer.from_pretrained(DISTILBERT_DIR)
+bert_model = AutoModelForSequenceClassification.from_pretrained(DISTILBERT_DIR)
 bert_model.eval()
 
-# Load Transformer Sarcasm Artifacts
-roberta_path: str = os.path.join(MODEL_DIR, "roberta_sarcasm")
-roberta_tokenizer = AutoTokenizer.from_pretrained(roberta_path)
-roberta_model = AutoModelForSequenceClassification.from_pretrained(roberta_path)
+# Load Transformer Sarcasm Artifacts (Step 5)
+roberta_tokenizer = AutoTokenizer.from_pretrained(SARCASM_DIR)
+roberta_model = AutoModelForSequenceClassification.from_pretrained(SARCASM_DIR)
 roberta_model.eval()
 
 
@@ -85,10 +86,7 @@ def _extract_sarcasm_index() -> int:
 
 
 def predict_sarcasm(review: str) -> Tuple[bool, float]:
-    """Evaluates input text for sarcastic tone using the fine-tuned RoBERTa model.
-    
-    Returns a tuple containing a boolean indicator and the calculated sarcasm probability.
-    """
+    """Evaluates input text for sarcastic tone using the fine-tuned RoBERTa model."""
     inputs = roberta_tokenizer(
         review,
         return_tensors="pt",
@@ -112,7 +110,6 @@ def predict_sarcasm(review: str) -> Tuple[bool, float]:
 def _apply_sarcasm_adjustment(raw_prob: float, is_sarcastic: bool, sarcasm_prob: float) -> float:
     """Adjusts raw sentiment probability by scaling score inversion proportionally to sarcasm confidence."""
     if is_sarcastic:
-        # Scale inversion linearly based on how far the score exceeds the confidence threshold
         weight = (sarcasm_prob - SARCASM_THRESHOLD) / (1.0 - SARCASM_THRESHOLD)
         inverted = 1.0 - raw_prob
         return (raw_prob * (1 - weight)) + (inverted * weight)
