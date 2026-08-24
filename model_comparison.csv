@@ -1,5 +1,3 @@
-Model,Category,Accuracy,Precision,Recall,F1 Score
-Naive Bayes,Machine Learning,0.8545,0.8546,0.8545,0.8545
-Logistic Regression,Machine Learning,0.891,0.8911,0.891,0.891
-LSTM,Artificial Neural Network,0.6254,0.7451,0.6254,0.5733
-DistilBERT,Transformer,0.8932,0.8947,0.8932,0.8931
+version https://git-lfs.github.com/spec/v1
+oid sha256:aea2802e858698f5512e596e555f4e405c9942f04d82cf9a080ec438125a5bbc
+size 279
