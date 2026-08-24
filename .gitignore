@@ -7,9 +7,6 @@ __pycache__/
 venv/
 env/
 
-# Datasets - DO NOT upload
-data/
-
 # Training checkpoints - DO NOT upload
 distilbert_output/
 
