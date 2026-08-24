@@ -7,9 +7,9 @@ __pycache__/
 venv/
 env/
 
-# Large training datasets - DO NOT upload
-data/raw/IMDb_Dataset.csv
-data/processed/processed_data.csv
+# Large training datasets
+data/raw/*.csv
+data/processed/*.csv
 
 # Training checkpoints - DO NOT upload
 distilbert_output/
