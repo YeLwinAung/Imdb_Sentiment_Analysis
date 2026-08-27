@@ -1,149 +1,107 @@
 import os
 import sys
+import time
 
-# Ensure root directory is added to sys.path for relative imports
+# Ensure root directory is in sys.path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app.predictor import (
-    predict_distilbert,
-    predict_logistic_regression,
-    predict_lstm,
-    predict_naive_bayes,
-)
+from app.predictor import predict_distilbert
 
+REVIEW_TYPES = [
+    "Extreme Positive","Strong Positive","Moderate Positive","Mild Positive",
+    "Neutral","Mixed","Mild Negative","Strong Negative","Extreme Negative",
+    "Sarcasm","Negation","Double Negation","Positive + Negative",
+    "Negative + Positive","Short Positive","Short Negative",
+    "Intensified Positive","Intensified Negative","Slang","Typos"
+]
 
-# STEAM RATING MAPPER
-def map_to_steam_rating(prob):
-    if prob >= 0.95:
-        return "Overwhelmingly Positive"
-    elif prob >= 0.80:
-        return "Very Positive"
-    elif prob >= 0.70:
-        return "Positive"
-    elif prob >= 0.40:
-        return "Mixed"
-    elif prob >= 0.20:
-        return "Negative"
-    elif prob >= 0.05:
-        return "Very Negative"
+EXPECTED_TARGETS = [
+    "Very Positive","Very Positive","Positive","Positive",
+    "Mixed","Mixed","Negative","Very Negative","Very Negative",
+    ("Negative","Very Negative"),"Positive","Positive","Mixed",
+    "Mixed","Very Positive","Very Negative","Very Positive",
+    "Very Negative","Very Positive","Very Positive"
+]
+
+REVIEWS_STRESS_TEST = [
+    "A stunning achievement that completely captured my attention. The direction was superb and every performance felt convincing.",
+    "This is a highly enjoyable film with excellent acting, an engaging plot, and several genuinely memorable moments.",
+    "A good movie overall. The characters were interesting and the story was entertaining enough to keep me watching.",
+    "I had a decent time with this one. It has some enjoyable scenes, even though it isn't particularly impressive.",
+    "Neither good nor bad. The movie has a few strong moments, but several parts felt ordinary and forgettable.",
+    "The actors were fantastic and the visuals looked incredible, but the weak storyline and slow middle section prevented it from being great.",
+    "The movie wasn't completely awful, but the boring dialogue and predictable events made it a disappointing experience.",
+    "I struggled to finish this film. The story was confusing, the acting felt forced, and almost nothing kept me interested.",
+    "An utterly miserable experience. The script was awful, the performances were embarrassing, and the entire movie felt like a waste of time.",
+    "Absolutely brilliant! I especially enjoyed the thrilling experience of watching nothing happen for nearly two hours.",
+    "I didn't dislike the movie as much as I expected. There were actually several scenes that I thought were enjoyable.",
+    "I can't really say that I didn't have a good time watching this film.",
+    "The lead performances were excellent and the music was beautiful, but the repetitive story and weak ending were major problems.",
+    "The movie started terribly and I nearly gave up, but the second half became engaging and the final scenes were surprisingly good.",
+    "Superb!",
+    "Horrendous!",
+    "Everything about this film was exceptional. The writing was clever, the cast was phenomenal, and the emotional payoff was perfect.",
+    "A painfully bad film with awful dialogue, irritating characters, ridiculous decisions, and an ending that made absolutely no sense.",
+    "This film was insanely fun! The jokes landed, the action was wild, and I had a great time from start to finish.",
+    "Luv this film! The charcters were awsum, the plot was amazng, and I wud totaly watch it agin!"
+]
+def run_stress_test():
+    total = len(REVIEWS_STRESS_TEST)
+    passed = 0
+    failed_cases = []
+
+    print("=" * 85)
+    print(f"RUNNING MODEL STRESS TEST & FAILURE ANALYSIS ({total} SAMPLES)")
+    print("=" * 85 + "\n")
+
+    for idx, (rtype, review, expected) in enumerate(zip(REVIEW_TYPES, REVIEWS_STRESS_TEST, EXPECTED_TARGETS), 1):
+        result = predict_distilbert(review)
+        pred_sentiment = result["sentiment"]
+        prob = result["positive_prob"]
+
+        if isinstance(expected, tuple):
+            is_pass = pred_sentiment in expected
+            exp_str = " / ".join(expected)
+        else:
+            is_pass = pred_sentiment == expected
+            exp_str = expected
+
+        if is_pass:
+            passed += 1
+            status = "[PASS]"
+        else:
+            status = "[FAIL]"
+            failed_cases.append({
+                "id": idx,
+                "type": rtype,
+                "review": review,
+                "predicted": pred_sentiment,
+                "expected": exp_str,
+                "prob": prob
+            })
+
+        print(f"{status} | #{idx:02d} | {rtype:<20} | Score: {prob:.4f} | Pred: {pred_sentiment:<13} | Expected: {exp_str}")
+
+    print("\n" + "=" * 85)
+    accuracy = (passed / total) * 100
+    print(f"SUMMARY: {passed}/{total} Passed | Accuracy: {accuracy:.1f}%")
+    print("=" * 85)
+
+    # DETAILED FAILURE BREAKDOWN REPORT
+    if failed_cases:
+        print("\n" + "!" * 85)
+        print(f"FAILED ANALYSIS REPORT ({len(failed_cases)} REVIEWS FAILED)")
+        print("!" * 85)
+        for fail in failed_cases:
+            print(f"\n[FAIL ITEM #{fail['id']:02d}] {fail['type']}")
+            print(f"  Review Text : \"{fail['review']}\"")
+            print(f"  Predicted   : {fail['predicted']} (Positive Probability: {fail['prob']:.4f})")
+            print(f"  Expected    : {fail['expected']}")
+        print("!" * 85)
     else:
-        return "Overwhelmingly Negative"
+        print("\n🎉 Perfect Run! All reviews passed analysis.")
 
-
-# GET PROBABILITY SAFELY
-def get_positive_prob(result):
-    if isinstance(result, dict):
-        return result.get("positive_prob", 0.5)
-    return 0.5
-
-
-# RUN ALL MODELS
-def get_model_predictions(review):
-    return {
-        "Naive Bayes": predict_naive_bayes(review),
-        "Logistic Regression": predict_logistic_regression(review),
-        "LSTM": predict_lstm(review),
-        "DistilBERT": predict_distilbert(review),
-    }
-
-
-# ANALYZE REVIEW
-def analyze_review(review):
-    predictions = get_model_predictions(review)
-
-    results = {}
-    total_prob = 0.0
-
-    for model_name, output in predictions.items():
-        prob = get_positive_prob(output)
-        total_prob += prob
-
-        results[model_name] = {
-            "sentiment": output.get("sentiment", "Unknown") if isinstance(output, dict) else output,
-            "probability": prob,
-            "steam_rating": map_to_steam_rating(prob),
-            "is_sarcastic": output.get("is_sarcastic", False) if isinstance(output, dict) else False,
-            "sarcasm_prob": output.get("sarcasm_prob", 0.0) if isinstance(output, dict) else 0.0,
-        }
-
-    avg_prob = total_prob / len(predictions)
-
-    results["AVERAGE"] = {
-        "probability": avg_prob,
-        "steam_rating": map_to_steam_rating(avg_prob),
-    }
-
-    return results
-
-
-# PRINT RESULTS
-def print_results(review, results):
-    print("=" * 80)
-    print("REVIEW:", review)
-    print("=" * 80)
-
-    for model_name, data in results.items():
-        if model_name != "AVERAGE":
-            print(f"\n[{model_name}]")
-            print(f"  Sentiment:      {data['sentiment']}")
-            print(f"  Is Sarcastic:   {data['is_sarcastic']} (Score: {data['sarcasm_prob']:.2%})")
-            print(f"  Probability:    {data['probability']:.2%}")
-            print(f"  Steam Rating:   {data['steam_rating']}")
-
-    avg_data = results["AVERAGE"]
-    print(f"\n---> [AVERAGE ENSEMBLE RESULT]")
-    print(f"     Probability:  {avg_data['probability']:.2%}")
-    print(f"     Steam Rating: {avg_data['steam_rating']}\n")
-
-
-# TEST RUNNER WITH 10 SARCASTIC & 3 SINCERE SAMPLES
 if __name__ == "__main__":
-
-    sarcastic_reviews = [
-        "Wow, what an amazing movie. I absolutely loved falling asleep halfway through it.",
-        "Great graphics, if you enjoy looking at blurry powerpoint presentations.",
-        "10/10 masterpiece, can't wait to never play this unoptimized mess again.",
-        "I love paying full price for a game that crashes every five minutes. Best purchase ever!",
-        "Truly a revolutionary experience. My computer turned into an oven in two minutes.",
-        "Thanks developers for deleting my save file, I really wanted to restart from scratch!",
-        "Fantastic voice acting, it sounds like everyone was reading off a napkin at gunpoint.",
-        "So glad I spent 60 dollars to stare at a loading screen all evening.",
-        "Amazing story line, I especially loved how none of the character choices mattered at all.",
-        "Super fun game if your idea of fun is standing in a virtual line for three hours."
-    ]
-
-    sincere_reviews = [
-        "The story is amazing and the graphics are incredible.",
-        "Boring gameplay and terrible graphics, waste of money.",
-        "It was decent, nothing special but enjoyable."
-    ]
-
-    print("\n" + "#" * 80)
-    print("1. RUNNING SARCASTIC REVIEWS TEST SUITE (10 SAMPLES)")
-    print("#" * 80)
-
-    sarcasm_detection_count = 0
-
-    for idx, review in enumerate(sarcastic_reviews, 1):
-        print(f"\n--- Sarcastic Test Case #{idx} ---")
-        result = analyze_review(review)
-        print_results(review, result)
-        
-        # Check if DistilBERT detected sarcasm
-        if result["DistilBERT"]["is_sarcastic"]:
-            sarcasm_detection_count += 1
-
-    print("\n" + "#" * 80)
-    print("2. RUNNING SINCERE REVIEWS TEST SUITE (3 BASELINE SAMPLES)")
-    print("#" * 80)
-
-    for idx, review in enumerate(sincere_reviews, 1):
-        print(f"\n--- Sincere Test Case #{idx} ---")
-        result = analyze_review(review)
-        print_results(review, result)
-
-    print("=" * 80)
-    print(f"SUMMARY: DistilBERT detected sarcasm in {sarcasm_detection_count}/10 test cases.")
-    print("=" * 80)
+    run_stress_test()

@@ -15,19 +15,37 @@ from transformers import (
     TrainingArguments,
 )
 
-# Configuration and Paths
+#Paths
 INPUT_PATH: str = "data/processed/processed_data.csv"
 MODEL_NAME: str = "distilbert-base-uncased"
 MODEL_DIR: str = "models/distilbert_model"
 OUTPUT_DIR: str = "distilbert_output"
-MAX_LENGTH: int = 256
+MAX_LENGTH: int = 128
+NUM_CLASSES: int = 5
 
-# Explicit Label Mappings
-LABEL_MAPPING: Dict[str, int] = {"negative": 0, "positive": 1}
-ID2LABEL: Dict[int, str] = {0: "NEGATIVE", 1: "POSITIVE"}
-LABEL2ID: Dict[str, int] = {"NEGATIVE": 0, "POSITIVE": 1}
+#Label Mappings
+ID2LABEL: Dict[int, str] = {
+    0: "Very Negative",
+    1: "Negative",
+    2: "Neutral",
+    3: "Positive",
+    4: "Very Positive",
+}
+LABEL2ID: Dict[str, int] = {v: k for k, v in ID2LABEL.items()}
+LABEL_MAPPING: Dict[str, int] = {
+    "0": 0,
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "very negative": 0,
+    "negative": 1,
+    "neutral": 2,
+    "positive": 3,
+    "very positive": 4,
+}
 
-# Load Hugging Face evaluation metrics
+# Load evaluation metrics
 accuracy_metric = evaluate.load("accuracy")
 f1_metric = evaluate.load("f1")
 precision_metric = evaluate.load("precision")
@@ -35,15 +53,17 @@ recall_metric = evaluate.load("recall")
 
 
 def compute_metrics(eval_pred) -> Dict[str, float]:
-    """Computes weighted evaluation metrics during training validation rounds."""
     logits, labels = eval_pred
     predictions = np.argmax(logits, axis=-1)
 
     acc = accuracy_metric.compute(predictions=predictions, references=labels)[
         "accuracy"
     ]
-    f1 = f1_metric.compute(
+    f1_weighted = f1_metric.compute(
         predictions=predictions, references=labels, average="weighted"
+    )["f1"]
+    f1_macro = f1_metric.compute(
+        predictions=predictions, references=labels, average="macro"
     )["f1"]
     precision = precision_metric.compute(
         predictions=predictions, references=labels, average="weighted"
@@ -54,16 +74,16 @@ def compute_metrics(eval_pred) -> Dict[str, float]:
 
     return {
         "accuracy": round(float(acc), 4),
-        "f1": round(float(f1), 4),
+        "f1_weighted": round(float(f1_weighted), 4),
+        "f1_macro": round(float(f1_macro), 4),
         "precision": round(float(precision), 4),
         "recall": round(float(recall), 4),
     }
 
 
 def train_distilbert_model() -> None:
-    """Executes the DistilBERT fine-tuning pipeline using Train/Validation sets."""
     print("==========================================")
-    print("       DistilBERT Sentiment Training")
+    print("      DistilBERT Fine-Tuning")
     print("==========================================")
 
     # Ensure output directories exist
@@ -82,15 +102,21 @@ def train_distilbert_model() -> None:
                 f"Required column '{col}' missing from dataset input."
             )
 
-    # Map sentiment labels to integer IDs
-    df["label"] = df["sentiment"].astype(str).str.lower().map(LABEL_MAPPING)
+    # Map sentiment labels
+    df["label"] = (
+        df["sentiment"]
+        .astype(str)
+        .str.lower()
+        .str.strip()
+        .map(LABEL_MAPPING)
+    )
 
-    # Clean missing or invalid rows
+    # Clean missing rows
     df = df.dropna(subset=["raw_review", "label"]).reset_index(drop=True)
     df["label"] = df["label"].astype(int)
     print(f"Valid record count: {len(df)}")
 
-    # 80/20 Train and Validation Split (Test set removed for training run)
+    # Train and Validation Split 80/20 
     train_df, validation_df = train_test_split(
         df, test_size=0.20, random_state=42, stratify=df["label"]
     )
@@ -100,7 +126,7 @@ def train_distilbert_model() -> None:
     print(f"Training samples   : {len(train_df)}")
     print(f"Validation samples : {len(validation_df)}")
 
-    # Convert to Hugging Face Datasets using un-modified raw text
+    # Convert to Hugging Face Datasets
     train_dataset = Dataset.from_pandas(
         train_df[["raw_review", "label"]], preserve_index=False
     )
@@ -126,14 +152,13 @@ def train_distilbert_model() -> None:
         tokenize_function, batched=True, remove_columns=["raw_review"]
     )
 
-    # Collator for dynamic padding
     data_collator = DataCollatorWithPadding(tokenizer=tokenizer)
 
-    # Initialize Model with label metadata
+    # Initialize Model
     print("\nInitializing DistilBERT sequence classifier...")
     model = AutoModelForSequenceClassification.from_pretrained(
         MODEL_NAME,
-        num_labels=2,
+        num_labels=NUM_CLASSES,
         id2label=ID2LABEL,
         label2id=LABEL2ID,
     )
@@ -155,14 +180,14 @@ def train_distilbert_model() -> None:
         eval_strategy="epoch",
         save_strategy="epoch",
         load_best_model_at_end=True,
-        metric_for_best_model="f1",
+        metric_for_best_model="f1_macro",
         greater_is_better=True,
         logging_steps=100,
         fp16=use_fp16,
         report_to="none",
     )
 
-    # Hugging Face Trainer setup using processing_class
+    # Hugging Face Trainer setup
     trainer = Trainer(
         model=model,
         args=training_args,
@@ -187,7 +212,7 @@ def train_distilbert_model() -> None:
     for key, val in validation_results.items():
         if key.startswith("eval_"):
             metric_name = key.replace("eval_", "").capitalize()
-            print(f"{metric_name:12s}: {val}")
+            print(f"{metric_name:14s}: {val}")
 
     # Export final model artifacts
     print("\n==========================================")
@@ -196,7 +221,7 @@ def train_distilbert_model() -> None:
     trainer.save_model(MODEL_DIR)
     tokenizer.save_pretrained(MODEL_DIR)
 
-    print("\nDistilBERT training completed successfully!")
+    print("\nDistilBERT 5-Class training completed successfully!")
 
 
 if __name__ == "__main__":

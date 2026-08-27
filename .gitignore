@@ -7,10 +7,6 @@ __pycache__/
 venv/
 env/
 
-# Large training datasets
-data/raw/*.csv
-data/processed/*.csv
-
 # Training checkpoints - DO NOT upload
 distilbert_output/
 
