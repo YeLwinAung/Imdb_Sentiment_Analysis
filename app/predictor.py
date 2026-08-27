@@ -27,12 +27,7 @@ import spacy
 from utils import ID2LABEL, process_sentiment_output
 
 # Initialize SpaCy model for syntactic parsing
-try:
-    nlp = spacy.load("en_core_web_sm")
-except OSError:
-    from spacy.cli import download
-    download("en_core_web_sm")
-    nlp = spacy.load("en_core_web_sm")
+nlp = spacy.load("en_core_web_sm")
 
 MODELS_DIR = os.path.join(BASE_DIR, "models")
 _model_cache: Dict[str, Any] = {}
