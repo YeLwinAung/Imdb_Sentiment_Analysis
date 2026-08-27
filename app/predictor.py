@@ -62,15 +62,34 @@ def enhanced_clean_text(text: str) -> str:
 
 
 def detect_idiomatic_adverbs(text: str) -> bool:
-
     doc = nlp(text.lower())
-    positive_verbs = {"like", "love", "enjoy", "want", "miss", "dig"}
-    intensifier_modifiers = {"bad", "hard", "crazy"}
 
+    positive_verbs = {"like", "love", "enjoy", "want", "miss", "dig"}
+    intensifiers = {"bad", "hard", "crazy", "much"}
+
+    # Handle common idiomatic expressions such as:
+    # "I like this movie so bad"
+    # "I love this movie so much"
+    idiomatic_pattern = re.compile(
+        r"\b(?:like|love|enjoy|want|miss|dig)"
+        r"\b.*\bso\s+(?:bad|hard|much|crazy)\b"
+    )
+
+    if idiomatic_pattern.search(text.lower()):
+        return True
+
+    # SpaCy dependency-based detection
     for token in doc:
-        if token.text in intensifier_modifiers and token.dep_ == "advmod":
-            if token.head.lemma_ in positive_verbs and token.head.pos_ in ["VERB", "HEAD"]:
-                return True
+        if token.lemma_ in intensifiers:
+            if token.dep_ in {"advmod", "amod"}:
+                head = token.head
+
+                if (
+                    head.lemma_ in positive_verbs
+                    or head.head.lemma_ in positive_verbs
+                ):
+                    return True
+
     return False
 
 
