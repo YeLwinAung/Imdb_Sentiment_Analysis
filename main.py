@@ -1,25 +1,33 @@
-import ast 
-import json 
-import os 
-import random 
-import re 
-import sys 
-import pandas as pd 
-import streamlit as st 
+import ast
+import json
+import os
+import random
+import re
+import sys
 
-# path
-BASE_DIR = os.path.dirname(os.path.abspath(__file__)) 
-if BASE_DIR not in sys.path: 
-    sys.path.insert(0, BASE_DIR) 
+import pandas as pd
+import streamlit as st
 
-from app.predictor import ( 
-    predict_distilbert, 
-    predict_logistic_regression, 
-    predict_lstm, 
-    predict_naive_bayes, 
-    predict_sarcasm, 
-) 
-from app.utils import correct_typos, calibrate_probability, derive_sentiment_label
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.join(BASE_DIR, "app")
+
+for path in [BASE_DIR, APP_DIR]:
+    if path not in sys.path:
+        sys.path.insert(0, path)
+
+from app.predictor import (
+    predict_distilbert,
+    predict_logistic_regression,
+    predict_lstm,
+    predict_naive_bayes,
+    predict_sarcasm,
+)
+
+from app.utils import (
+    correct_typos,
+    calibrate_probability,
+    derive_sentiment_label,
+)
 
 # Set Streamlit page layout 
 st.set_page_config( 
