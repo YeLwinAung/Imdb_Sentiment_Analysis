@@ -4,16 +4,13 @@ import os
 import random
 import re
 import sys
-
 import pandas as pd
 import streamlit as st
 
+# path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-APP_DIR = os.path.join(BASE_DIR, "app")
-
-for path in [BASE_DIR, APP_DIR]:
-    if path not in sys.path:
-        sys.path.insert(0, path)
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 from app.predictor import (
     predict_distilbert,
@@ -22,52 +19,47 @@ from app.predictor import (
     predict_naive_bayes,
     predict_sarcasm,
 )
+from app.utils import correct_typos, calibrate_probability, derive_sentiment_label
 
-from app.utils import (
-    correct_typos,
-    calibrate_probability,
-    derive_sentiment_label,
+# Set Streamlit page layout
+st.set_page_config(
+    page_title="IMDb Movie Reviews",
+    layout="wide",
 )
 
-# Set Streamlit page layout 
-st.set_page_config( 
-    page_title="IMDb Movie Reviews", 
-    layout="wide", 
-) 
-
 # Custom IMDb UI
-st.markdown( 
-    """ 
+st.markdown(
+    """
 <style>  
     .stApp {  
         background-color: #121212 !important;  
         color: #FFFFFF !important;  
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }  
-    .stTextArea textarea, .stTextInput input { 
-        color: #FFFFFF !important; 
-        background-color: #1E1E1E !important; 
-        border: 1px solid #444444 !important; 
-        font-size: 1rem !important; 
-    } 
-    .stTextArea textarea::placeholder, .stTextInput input::placeholder { 
-        color: #AAAAAA !important; 
-    } 
-    .stTextArea textarea:focus, .stTextInput input:focus { 
-        border-color: #F5C518 !important; 
-    } 
-    div[data-testid="stMetricValue"] { 
-        color: #FFFFFF !important; 
-        font-weight: 800 !important; 
-        font-size: 1.8rem !important; 
-        opacity: 1 !important; 
-    } 
-    div[data-testid="stMetricLabel"] { 
-        color: #D0D0D0 !important; 
-        font-weight: 600 !important; 
-        font-size: 0.95rem !important; 
-        opacity: 1 !important; 
-    } 
+    .stTextArea textarea, .stTextInput input {
+        color: #FFFFFF !important;
+        background-color: #1E1E1E !important;
+        border: 1px solid #444444 !important;
+        font-size: 1rem !important;
+    }
+    .stTextArea textarea::placeholder, .stTextInput input::placeholder {
+        color: #AAAAAA !important;
+    }
+    .stTextArea textarea:focus, .stTextInput input:focus {
+        border-color: #F5C518 !important;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #FFFFFF !important;
+        font-weight: 800 !important;
+        font-size: 1.8rem !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #D0D0D0 !important;
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        opacity: 1 !important;
+    }
     .imdb-brand {  
         background-color: #F5C518;  
         color: #000000;  
@@ -82,7 +74,7 @@ st.markdown(
         font-size: 1.4rem;  
         font-weight: 700;  
         margin-left: 12px;  
-        color: #FFFFFF; 
+        color: #FFFFFF;
         display: inline-block;  
         vertical-align: middle;  
     }  
@@ -109,7 +101,7 @@ st.markdown(
     .movie-meta {  
         font-size: 0.88rem;  
         color: #CCCCCC;  
-        line-height: 1.4; 
+        line-height: 1.4;
         margin-bottom: 12px;  
     }  
     .badge {  
@@ -150,129 +142,146 @@ st.markdown(
         color: #E0E0E0;  
         line-height: 1.5;  
     }  
-    div.stButton > button { 
-        background-color: #F5C518 !important; 
-        color: #000000 !important; 
-        font-weight: 700 !important; 
-        border: none !important; 
-        border-radius: 4px !important; 
-    } 
-    div.stButton > button:hover { 
-        background-color: #E2B616 !important; 
-        color: #000000 !important; 
-    } 
-</style> 
-""", 
-    unsafe_allow_html=True, 
-) 
+    div.stButton > button {
+        background-color: #F5C518 !important;
+        color: #000000 !important;
+        font-weight: 700 !important;
+        border: none !important;
+        border-radius: 4px !important;
+    }
+    div.stButton > button:hover {
+        background-color: #E2B616 !important;
+        color: #000000 !important;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
-# Extract csv files data strings 
-def safe_extract_names(raw_val, limit=5): 
-    if pd.isna(raw_val) or not str(raw_val).strip(): 
-        return "N/A" 
+# Censor inappropriate profanities
+def censor_text(text: str) -> str:
+    if not text:
+        return ""
+    
+    profanities = [
+        r"shit", r"fuck", r"bitch", r"asshole", r"bastard", 
+        r"crap", r"damn", r"dick", r"pussy", r"cock"
+    ]
+    
+    censored = text
+    for word in profanities:
+        pattern = re.compile(rf"\b{word}\b", re.IGNORECASE)
+        censored = pattern.sub(lambda m: m.group(0)[0] + "*" * (len(m.group(0)) - 1), censored)
+        
+    return censored
+
+# Extract csv files data strings
+def safe_extract_names(raw_val, limit=5):
+    if pd.isna(raw_val) or not str(raw_val).strip():
+        return "N/A"
       
-    val_str = str(raw_val).strip() 
-    extracted_names = re.findall(r"'name':\s*'([^']*)'", val_str) 
-    if not extracted_names: 
-        extracted_names = re.findall(r'"name":\s*"([^"]*)"', val_str) 
+    val_str = str(raw_val).strip()
+    extracted_names = re.findall(r"'name':\s*'([^']*)'", val_str)
+    if not extracted_names:
+        extracted_names = re.findall(r'"name":\s*"([^"]*)"', val_str)
       
-    if extracted_names: 
-        return ", ".join(extracted_names[:limit]) 
+    if extracted_names:
+        return ", ".join(extracted_names[:limit])
 
-    try: 
-        data = ast.literal_eval(val_str) 
-        if isinstance(data, list): 
-            names = [item.get("name") for item in data if isinstance(item, dict) and "name" in item] 
-            if names: 
-                return ", ".join(names[:limit]) 
-    except Exception: 
-        pass 
+    try:
+        data = ast.literal_eval(val_str)
+        if isinstance(data, list):
+            names = [item.get("name") for item in data if isinstance(item, dict) and "name" in item]
+            if names:
+                return ", ".join(names[:limit])
+    except Exception:
+        pass
 
-    if not val_str.startswith("[") and not val_str.startswith("{"): 
-        return val_str 
+    if not val_str.startswith("[") and not val_str.startswith("{"):
+        return val_str
 
-    return "N/A" 
+    return "N/A"
 
-# Load TMDB dataset 
-@st.cache_data 
-def load_relational_dataset(): 
-    data_dir = os.path.join(BASE_DIR, "data", "raw", "TMDB") 
-    if not os.path.exists(data_dir): 
-        data_dir = os.path.join("data", "raw", "TMDB") 
+# Load TMDB dataset
+@st.cache_data
+def load_relational_dataset():
+    data_dir = os.path.join(BASE_DIR, "data", "raw", "TMDB")
+    if not os.path.exists(data_dir):
+        data_dir = os.path.join("data", "raw", "TMDB")
 
-    try: 
-        movies_df = pd.read_csv(os.path.join(data_dir, "movies.csv"), engine="python", on_bad_lines="skip") 
-        cast_df = pd.DataFrame() 
-        crew_df = pd.DataFrame() 
-        reviews_df = pd.DataFrame() 
+    try:
+        movies_df = pd.read_csv(os.path.join(data_dir, "movies.csv"), engine="python", on_bad_lines="skip")
+        cast_df = pd.DataFrame()
+        crew_df = pd.DataFrame()
+        reviews_df = pd.DataFrame()
 
-        if os.path.exists(os.path.join(data_dir, "cast.csv")): 
-            cast_df = pd.read_csv(os.path.join(data_dir, "cast.csv"), engine="python", on_bad_lines="skip") 
-        if os.path.exists(os.path.join(data_dir, "crew.csv")): 
-            crew_df = pd.read_csv(os.path.join(data_dir, "crew.csv"), engine="python", on_bad_lines="skip") 
-        if os.path.exists(os.path.join(data_dir, "reviews.csv")): 
-            reviews_df = pd.read_csv(os.path.join(data_dir, "reviews.csv"), engine="python", on_bad_lines="skip") 
+        if os.path.exists(os.path.join(data_dir, "cast.csv")):
+            cast_df = pd.read_csv(os.path.join(data_dir, "cast.csv"), engine="python", on_bad_lines="skip")
+        if os.path.exists(os.path.join(data_dir, "crew.csv")):
+            crew_df = pd.read_csv(os.path.join(data_dir, "crew.csv"), engine="python", on_bad_lines="skip")
+        if os.path.exists(os.path.join(data_dir, "reviews.csv")):
+            reviews_df = pd.read_csv(os.path.join(data_dir, "reviews.csv"), engine="python", on_bad_lines="skip")
 
-        for df in [movies_df, cast_df, crew_df, reviews_df]: 
-            if not df.empty: 
-                if 'id' in df.columns and 'movie_id' not in df.columns: 
-                    df.rename(columns={'id': 'movie_id'}, inplace=True) 
-                if 'movie_id' in df.columns: 
-                    df['movie_id'] = pd.to_numeric(df['movie_id'], errors='coerce') 
+        for df in [movies_df, cast_df, crew_df, reviews_df]:
+            if not df.empty:
+                if 'id' in df.columns and 'movie_id' not in df.columns:
+                    df.rename(columns={'id': 'movie_id'}, inplace=True)
+                if 'movie_id' in df.columns:
+                    df['movie_id'] = pd.to_numeric(df['movie_id'], errors='coerce')
 
-        movies_df = movies_df.dropna(subset=['movie_id']) 
-        movies_df['movie_id'] = movies_df['movie_id'].astype(int) 
+        movies_df = movies_df.dropna(subset=['movie_id'])
+        movies_df['movie_id'] = movies_df['movie_id'].astype(int)
 
-        if not cast_df.empty and 'movie_id' in cast_df.columns and 'name' in cast_df.columns: 
-            cast_df['movie_id'] = pd.to_numeric(cast_df['movie_id'], errors='coerce') 
-            cast_df = cast_df.dropna(subset=['movie_id']) 
-            cast_df['movie_id'] = cast_df['movie_id'].astype(int) 
-            sort_col = 'cast_order' if 'cast_order' in cast_df.columns else ('order' if 'order' in cast_df.columns else 'movie_id') 
-            top_cast = ( 
-                cast_df.sort_values(['movie_id', sort_col]) 
-                .groupby('movie_id')['name'] 
-                .apply(lambda x: ', '.join(x.dropna().head(5).astype(str))) 
-                .reset_index() 
-            ) 
-            top_cast.rename(columns={'name': 'cast_names'}, inplace=True) 
-            movies_df = movies_df.merge(top_cast, on='movie_id', how='left') 
-            movies_df['cast'] = movies_df['cast_names'] 
-        elif 'cast' in movies_df.columns: 
-            movies_df['cast'] = movies_df['cast'].apply(lambda x: safe_extract_names(x, 5)) 
+        if not cast_df.empty and 'movie_id' in cast_df.columns and 'name' in cast_df.columns:
+            cast_df['movie_id'] = pd.to_numeric(cast_df['movie_id'], errors='coerce')
+            cast_df = cast_df.dropna(subset=['movie_id'])
+            cast_df['movie_id'] = cast_df['movie_id'].astype(int)
+            sort_col = 'cast_order' if 'cast_order' in cast_df.columns else ('order' if 'order' in cast_df.columns else 'movie_id')
+            top_cast = (
+                cast_df.sort_values(['movie_id', sort_col])
+                .groupby('movie_id')['name']
+                .apply(lambda x: ', '.join(x.dropna().head(5).astype(str)))
+                .reset_index()
+            )
+            top_cast.rename(columns={'name': 'cast_names'}, inplace=True)
+            movies_df = movies_df.merge(top_cast, on='movie_id', how='left')
+            movies_df['cast'] = movies_df['cast_names']
+        elif 'cast' in movies_df.columns:
+            movies_df['cast'] = movies_df['cast'].apply(lambda x: safe_extract_names(x, 5))
 
-        if not crew_df.empty and 'movie_id' in crew_df.columns and 'name' in crew_df.columns: 
-            crew_df['movie_id'] = pd.to_numeric(crew_df['movie_id'], errors='coerce') 
-            crew_df = crew_df.dropna(subset=['movie_id']) 
-            crew_df['movie_id'] = crew_df['movie_id'].astype(int) 
-            job_col = 'job' if 'job' in crew_df.columns else None 
+        if not crew_df.empty and 'movie_id' in crew_df.columns and 'name' in crew_df.columns:
+            crew_df['movie_id'] = pd.to_numeric(crew_df['movie_id'], errors='coerce')
+            crew_df = crew_df.dropna(subset=['movie_id'])
+            crew_df['movie_id'] = crew_df['movie_id'].astype(int)
+            job_col = 'job' if 'job' in crew_df.columns else None
               
-            if job_col: 
-                directors = crew_df[crew_df[job_col] == 'Director'].groupby('movie_id')['name'].apply(lambda x: ', '.join(x.astype(str))).reset_index() 
-            else: 
-                directors = crew_df.groupby('movie_id')['name'].apply(lambda x: ', '.join(x.head(1).astype(str))).reset_index() 
+            if job_col:
+                directors = crew_df[crew_df[job_col] == 'Director'].groupby('movie_id')['name'].apply(lambda x: ', '.join(x.astype(str))).reset_index()
+            else:
+                directors = crew_df.groupby('movie_id')['name'].apply(lambda x: ', '.join(x.head(1).astype(str))).reset_index()
                   
-            directors.rename(columns={'name': 'director_names'}, inplace=True) 
-            movies_df = movies_df.merge(directors, on='movie_id', how='left') 
-            movies_df['director'] = movies_df['director_names'] 
-        elif 'crew' in movies_df.columns: 
-            movies_df['director'] = movies_df['crew'].apply(lambda x: safe_extract_names(x, 1)) 
+            directors.rename(columns={'name': 'director_names'}, inplace=True)
+            movies_df = movies_df.merge(directors, on='movie_id', how='left')
+            movies_df['director'] = movies_df['director_names']
+        elif 'crew' in movies_df.columns:
+            movies_df['director'] = movies_df['crew'].apply(lambda x: safe_extract_names(x, 1))
 
-        movies_df['cast'] = movies_df['cast'].fillna('N/A') 
-        movies_df['director'] = movies_df['director'].fillna('Unknown') 
+        movies_df['cast'] = movies_df['cast'].fillna('N/A')
+        movies_df['director'] = movies_df['director'].fillna('Unknown')
 
-        if 'genres' in movies_df.columns: 
-            movies_df['genres'] = movies_df['genres'].apply(safe_extract_names) 
+        if 'genres' in movies_df.columns:
+            movies_df['genres'] = movies_df['genres'].apply(safe_extract_names)
 
-        return movies_df, reviews_df 
+        return movies_df, reviews_df
 
-    except Exception as e: 
-        print(f"[BACKEND ERROR] Loader failure: {e}") 
-        return pd.DataFrame(), pd.DataFrame() 
+    except Exception as e:
+        print(f"[BACKEND ERROR] Loader failure: {e}")
+        return pd.DataFrame(), pd.DataFrame()
 
-movies_df, dataset_reviews_df = load_relational_dataset() 
+movies_df, dataset_reviews_df = load_relational_dataset()
 
 # predictor derivation logic
-def get_5tier_sentiment(prob: float) -> tuple[str, str]: 
+def get_5tier_sentiment(prob: float) -> tuple[str, str]:
     label = derive_sentiment_label(prob)
     label_upper = label.upper()
     
@@ -288,278 +297,289 @@ def get_5tier_sentiment(prob: float) -> tuple[str, str]:
     badge_class = badge_mapping.get(label_upper, "badge-mix")
     return label_upper, badge_class
 
-#sentiment processing
-def analyze_review_text(review: str) -> dict: 
-    corrected_text = correct_typos(review) 
+# sentiment processing
+def analyze_review_text(review: str) -> dict:
+    models_results = {
+        "DistilBERT": predict_distilbert(review),
+        "Naive Bayes": predict_naive_bayes(review),
+        "Logistic Regression": predict_logistic_regression(review),
+        "LSTM": predict_lstm(review),
+    }
 
-    models_results = { 
-        "DistilBERT": predict_distilbert(review), 
-        "Naive Bayes": predict_naive_bayes(review), 
-        "Logistic Regression": predict_logistic_regression(review), 
-        "LSTM": predict_lstm(review), 
-    } 
+    distilbert_res = models_results["DistilBERT"]
 
-    distilbert_res = models_results["DistilBERT"] 
-
-    # sarcasm
-    if distilbert_res.get("is_sarcastic", False): 
-        best_model_name = "DistilBERT + RoBERTa (Sarcasm Detector)" 
-        best_prob = distilbert_res["positive_prob"] 
-    else: 
-        best_model_name = "DistilBERT (Transformer)" 
-        best_prob = distilbert_res["positive_prob"] 
+    # sarcasm detection and probability calculation
+    sarcasm_res = predict_sarcasm(review)
+    if sarcasm_res.get("is_sarcastic", False) or distilbert_res.get("is_sarcastic", False):
+        best_model_name = "DistilBERT + RoBERTa (Sarcasm Detector)"
+        raw_prob = distilbert_res["positive_prob"]
+        best_prob = 1.0 - raw_prob if raw_prob > 0.5 else raw_prob
+    else:
+        best_model_name = "DistilBERT (Transformer)"
+        best_prob = distilbert_res["positive_prob"]
 
     calibrated_prob = calibrate_probability(review, best_prob)
-    rating_label, badge_class = get_5tier_sentiment(calibrated_prob) 
+    rating_label, badge_class = get_5tier_sentiment(calibrated_prob)
 
-    return { 
-        "rating": rating_label, 
-        "badge_class": badge_class, 
-        "positive_prob": calibrated_prob, 
-        "best_model_name": best_model_name, 
-        "corrected_text": corrected_text, 
-        "all_models": models_results, 
-    } 
+    return {
+        "rating": rating_label,
+        "badge_class": badge_class,
+        "positive_prob": calibrated_prob,
+        "best_model_name": best_model_name,
+        "all_models": models_results,
+    }
 
 # Generate random usernames
-def generate_username(): 
-    usernames = ["User_804", "Critic_Sam", "Movie_Viewer", "Audience_Member", "Film_Fanatic", "Cinema_Lover"] 
-    return random.choice(usernames) 
+def generate_username():
+    usernames = ["User_804", "Critic_Sam", "Movie_Viewer", "Audience_Member", "Film_Fanatic", "Cinema_Lover"]
+    return random.choice(usernames)
 
-# Retrieve or initialize movie reviews 
-def get_or_init_movie_reviews(movie_id): 
-    if "reviews_db" not in st.session_state: 
-        st.session_state.reviews_db = {} 
+# Retrieve or initialize movie reviews
+def get_or_init_movie_reviews(movie_id):
+    if "reviews_db" not in st.session_state:
+        st.session_state.reviews_db = {}
 
-    if movie_id not in st.session_state.reviews_db: 
-        analyzed_list = [] 
-        if not dataset_reviews_df.empty and "movie_id" in dataset_reviews_df.columns: 
-            raw_reviews = dataset_reviews_df[dataset_reviews_df["movie_id"] == movie_id] 
+    if movie_id not in st.session_state.reviews_db:
+        analyzed_list = []
+        if not dataset_reviews_df.empty and "movie_id" in dataset_reviews_df.columns:
+            raw_reviews = dataset_reviews_df[dataset_reviews_df["movie_id"] == movie_id]
 
-            for _, r_row in raw_reviews.iterrows(): 
-                content = str(r_row.get("content", "")).strip() 
-                if not content or content == "nan": 
-                    continue 
+            for _, r_row in raw_reviews.iterrows():
+                content = str(r_row.get("content", "")).strip()
+                if not content or content == "nan":
+                    continue
 
-                author = r_row.get("author", generate_username()) 
-                analysis = analyze_review_text(content) 
+                author = r_row.get("author", generate_username())
+                
+                # Preprocess review text
+                clean_content = correct_typos(content)
+                clean_content = censor_text(clean_content)
+                
+                analysis = analyze_review_text(clean_content)
 
-                analyzed_list.append({ 
-                    "user": author, 
-                    "text": content, 
-                    "rating": analysis["rating"], 
-                    "badge_class": analysis["badge_class"], 
-                    "positive_prob": analysis["positive_prob"] 
-                }) 
+                analyzed_list.append({
+                    "user": author,
+                    "text": clean_content,
+                    "rating": analysis["rating"],
+                    "badge_class": analysis["badge_class"],
+                    "positive_prob": analysis["positive_prob"]
+                })
 
-        st.session_state.reviews_db[movie_id] = analyzed_list 
+        st.session_state.reviews_db[movie_id] = analyzed_list
 
-    return st.session_state.reviews_db[movie_id] 
+    return st.session_state.reviews_db[movie_id]
 
-# Calculate overall sentiment 
-def calculate_overall_sentiment(reviews_list): 
-    if not reviews_list: 
-        return "NO REVIEWS", "badge-mix", 0.0, 0.0, 0 
+# Calculate overall sentiment
+def calculate_overall_sentiment(reviews_list):
+    if not reviews_list:
+        return "NO REVIEWS", "badge-mix", 0.0, 0.0, 0
 
-    total_reviews = len(reviews_list) 
-    avg_pos_prob = sum(r["positive_prob"] for r in reviews_list) / total_reviews 
+    total_reviews = len(reviews_list)
+    avg_pos_prob = sum(r["positive_prob"] for r in reviews_list) / total_reviews
 
-    pos_count = sum(1 for r in reviews_list if r["positive_prob"] >= 0.60) 
-    neg_count = sum(1 for r in reviews_list if r["positive_prob"] <= 0.40) 
+    pos_count = sum(1 for r in reviews_list if r["positive_prob"] >= 0.60)
+    neg_count = sum(1 for r in reviews_list if r["positive_prob"] <= 0.40)
 
-    pos_percentage = round((pos_count / total_reviews) * 100, 1) 
-    neg_percentage = round((neg_count / total_reviews) * 100, 1) 
+    pos_percentage = round((pos_count / total_reviews) * 100, 1)
+    neg_percentage = round((neg_count / total_reviews) * 100, 1)
 
-    rating_label, badge_class = get_5tier_sentiment(avg_pos_prob) 
+    rating_label, badge_class = get_5tier_sentiment(avg_pos_prob)
 
-    return rating_label, badge_class, pos_percentage, neg_percentage, total_reviews 
+    return rating_label, badge_class, pos_percentage, neg_percentage, total_reviews
 
-# Page initialization 
-if "current_page" not in st.session_state: 
-    st.session_state.current_page = "catalog" 
+# Page initialization
+if "current_page" not in st.session_state:
+    st.session_state.current_page = "catalog"
 
-if "selected_movie_id" not in st.session_state: 
-    st.session_state.selected_movie_id = None 
+if "selected_movie_id" not in st.session_state:
+    st.session_state.selected_movie_id = None
 
-# Navigation handlers 
-def go_to_movie(movie_id): 
-    st.session_state.selected_movie_id = movie_id 
-    st.session_state.current_page = "movie_details" 
+# Navigation handlers
+def go_to_movie(movie_id):
+    st.session_state.selected_movie_id = movie_id
+    st.session_state.current_page = "movie_details"
 
-def go_to_catalog(): 
-    st.session_state.current_page = "catalog" 
-    st.session_state.selected_movie_id = None 
+def go_to_catalog():
+    st.session_state.current_page = "catalog"
+    st.session_state.selected_movie_id = None
 
-# Navigation Bar 
-nav_col1, nav_col2 = st.columns([6, 1]) 
-with nav_col1: 
-    st.markdown( 
-        '<span class="imdb-brand">IMDb</span><span class="nav-title">Movie Reviews </span>', 
-        unsafe_allow_html=True, 
-    ) 
-with nav_col2: 
-    if st.session_state.current_page == "movie_details": 
-        if st.button("Back", use_container_width=True): 
-            go_to_catalog() 
-            st.rerun() 
+# Navigation Bar
+nav_col1, nav_col2 = st.columns([6, 1])
+with nav_col1:
+    st.markdown(
+        '<span class="imdb-brand">IMDb</span><span class="nav-title">Movie Reviews </span>',
+        unsafe_allow_html=True,
+    )
+with nav_col2:
+    if st.session_state.current_page == "movie_details":
+        if st.button("Back", use_container_width=True):
+            go_to_catalog()
+            st.rerun()
 
-st.divider() 
+st.divider()
 
-# Catalog Page View 
-if st.session_state.current_page == "catalog": 
-    if movies_df.empty: 
-        st.warning("No movie records found.") 
-    else: 
-        st.subheader("Movies") 
+# Catalog Page View
+if st.session_state.current_page == "catalog":
+    if movies_df.empty:
+        st.warning("No movie records found.")
+    else:
+        st.subheader("Movies")
 
-        search_query = st.text_input( 
-            "Search Movies:", 
-            placeholder="Search movie...", 
-            label_visibility="collapsed", 
-        ) 
+        search_query = st.text_input(
+            "Search Movies:",
+            placeholder="Search movie...",
+            label_visibility="collapsed",
+        )
 
-        if search_query: 
-            results = movies_df[movies_df["title"].astype(str).str.contains(search_query, case=False, na=False)] 
-        else: 
-            results = movies_df.head(12) 
+        if search_query:
+            results = movies_df[movies_df["title"].astype(str).str.contains(search_query, case=False, na=False)]
+        else:
+            results = movies_df.head(12)
 
-        st.caption(f"Showing {len(results)} movies") 
-        st.markdown("<br>", unsafe_allow_html=True) 
+        st.caption(f"Showing {len(results)} movies")
+        st.markdown("<br>", unsafe_allow_html=True)
 
-        cols = st.columns(3) 
-        for idx, (_, row) in enumerate(results.iterrows()): 
-            m_id = row.get("movie_id") 
-            title = row.get("title", "Untitled") 
-            director = row.get("director", "Unknown") 
-            cast_str = str(row.get("cast", "N/A")) 
+        cols = st.columns(3)
+        for idx, (_, row) in enumerate(results.iterrows()):
+            m_id = row.get("movie_id")
+            title = row.get("title", "Untitled")
+            director = row.get("director", "Unknown")
+            cast_str = str(row.get("cast", "N/A"))
 
-            with cols[idx % 3]: 
-                st.markdown( 
-                    f""" 
-                    <div class="movie-card-container"> 
-                        <div class="movie-title">{title}</div> 
-                        <div class="movie-meta"> 
-                            <strong>Director:</strong> {director}<br> 
-                            <strong>Cast:</strong> {cast_str} 
-                        </div> 
-                    </div> 
-                    """, 
-                    unsafe_allow_html=True, 
-                ) 
-                if st.button("View", key=f"btn_{m_id}", use_container_width=True): 
-                    go_to_movie(m_id) 
-                    st.rerun() 
-                st.markdown("<br>", unsafe_allow_html=True) 
+            with cols[idx % 3]:
+                st.markdown(
+                    f"""
+                    <div class="movie-card-container">
+                        <div class="movie-title">{title}</div>
+                        <div class="movie-meta">
+                            <strong>Director:</strong> {director}<br>
+                            <strong>Cast:</strong> {cast_str}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if st.button("View", key=f"btn_{m_id}", use_container_width=True):
+                    go_to_movie(m_id)
+                    st.rerun()
+                st.markdown("<br>", unsafe_allow_html=True)
 
-# Movie Details 
-elif st.session_state.current_page == "movie_details": 
-    movie_id = st.session_state.selected_movie_id 
-    movie_match = movies_df[movies_df["movie_id"] == movie_id] 
+# Movie Details
+elif st.session_state.current_page == "movie_details":
+    movie_id = st.session_state.selected_movie_id
+    movie_match = movies_df[movies_df["movie_id"] == movie_id]
 
-    if movie_match.empty: 
-        st.error("Movie not found.") 
-        if st.button("Back"): 
-            go_to_catalog() 
-            st.rerun() 
-    else: 
-        movie_row = movie_match.iloc[0] 
-        title = movie_row.get("title", "Untitled") 
-        director = movie_row.get("director", "Unknown") 
-        cast_info = movie_row.get("cast", "N/A") 
-        genres_info = movie_row.get("genres", "Uncategorized") 
+    if movie_match.empty:
+        st.error("Movie not found.")
+        if st.button("Back"):
+            go_to_catalog()
+            st.rerun()
+    else:
+        movie_row = movie_match.iloc[0]
+        title = movie_row.get("title", "Untitled")
+        director = movie_row.get("director", "Unknown")
+        cast_info = movie_row.get("cast", "N/A")
+        genres_info = movie_row.get("genres", "Uncategorized")
 
-        movie_reviews = get_or_init_movie_reviews(movie_id) 
-        overall_label, overall_badge, pos_pct, neg_pct, total_revs = calculate_overall_sentiment(movie_reviews) 
+        movie_reviews = get_or_init_movie_reviews(movie_id)
+        overall_label, overall_badge, pos_pct, neg_pct, total_revs = calculate_overall_sentiment(movie_reviews)
 
-        st.markdown( 
-            f""" 
-            <div style="background-color: #1E1E1E; border-radius: 6px; padding: 24px; border: 1px solid #333333; margin-bottom: 24px;"> 
-                <h1 style="margin:0; font-size: 2.2rem; color: #FFFFFF;">{title}</h1> 
-                <p style="color: #F5C518; font-size: 1rem; font-weight: 600; margin-top: 6px;">Directed by {director}</p> 
-                <p style="color: #CCCCCC; font-size: 0.90rem;"><strong>Cast:</strong> {cast_info}</p> 
-                <p style="color: #AAAAAA; font-size: 0.85rem;"><strong>Genre:</strong> {genres_info}</p> 
-            </div> 
-            """, 
-            unsafe_allow_html=True, 
-        ) 
+        st.markdown(
+            f"""
+            <div style="background-color: #1E1E1E; border-radius: 6px; padding: 24px; border: 1px solid #333333; margin-bottom: 24px;">
+                <h1 style="margin:0; font-size: 2.2rem; color: #FFFFFF;">{title}</h1>
+                <p style="color: #F5C518; font-size: 1rem; font-weight: 600; margin-top: 6px;">Directed by {director}</p>
+                <p style="color: #CCCCCC; font-size: 0.90rem;"><strong>Cast:</strong> {cast_info}</p>
+                <p style="color: #AAAAAA; font-size: 0.85rem;"><strong>Genre:</strong> {genres_info}</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
-        st.subheader("Audience Sentiment") 
-        met1, met2, met3, met4 = st.columns(4) 
-        met1.metric("Sentiment", overall_label) 
-        met2.metric("Positive Reviews", f"{pos_pct}%") 
-        met3.metric("Negative Reviews", f"{neg_pct}%") 
-        met4.metric("Total Reviews", total_revs) 
+        st.subheader("Audience Sentiment")
+        met1, met2, met3, met4 = st.columns(4)
+        met1.metric("Sentiment", overall_label)
+        met2.metric("Positive Reviews", f"{pos_pct}%")
+        met3.metric("Negative Reviews", f"{neg_pct}%")
+        met4.metric("Total Reviews", total_revs)
 
-        st.divider() 
-        st.subheader("Reviews") 
+        st.divider()
+        st.subheader("Reviews")
 
-        with st.container(): 
-            review_input = st.text_area( 
-                "Write a review:", 
-                placeholder="Share your thoughts on this movie...", 
-                height=100, 
-                label_visibility="collapsed", 
-            ) 
+        with st.container():
+            review_input = st.text_area(
+                "Write a review:",
+                placeholder="Share your thoughts on this movie...",
+                height=100,
+                label_visibility="collapsed",
+            )
 
-            col_post, _ = st.columns([2, 5]) 
-            with col_post: 
-                post_submit = st.button("Post Review", type="primary", use_container_width=True) 
+            col_post, _ = st.columns([2, 5])
+            with col_post:
+                post_submit = st.button("Post Review", type="primary", use_container_width=True)
 
-            if post_submit: 
-                if not review_input.strip(): 
-                    st.warning("Please enter review text before submitting.") 
-                else: 
-                    # Analysis execution 
-                    analysis = analyze_review_text(review_input.strip()) 
+            if post_submit:
+                raw_input_text = review_input.strip()
+                if not raw_input_text:
+                    st.warning("Please enter review text before submitting.")
+                else:
+                    # Auto-correct spelling and censor swear words post click
+                    corrected_text = correct_typos(raw_input_text)
+                    censored_text = censor_text(corrected_text)
 
-                    # Print full model analysis to terminal 
-                    print("\n" + "=" * 60) 
-                    print(f"[TERMINAL LOG] RAW INPUT: \"{review_input.strip()}\"") 
-                    if analysis["corrected_text"].lower() != review_input.strip().lower(): 
-                        print(f"[TERMINAL LOG] CLEANED INPUT: \"{analysis['corrected_text']}\"") 
+                    # Analysis execution
+                    analysis = analyze_review_text(censored_text)
 
-                    print("-" * 60) 
-                    print(f"[TERMINAL LOG] BEST MODEL SELECTED : {analysis['best_model_name']}") 
-                    print(f"[TERMINAL LOG] CALIBRATED PROBABILITY: {analysis['positive_prob']:.4f}") 
-                    print(f"[TERMINAL LOG]  RATING : {analysis['rating']}") 
-                    print("-" * 60) 
+                    # Print full model analysis to terminal
+                    print("\n" + "=" * 60)
+                    print(f"[TERMINAL LOG] RAW INPUT: \"{raw_input_text}\"")
+                    if corrected_text.lower() != raw_input_text.lower():
+                        print(f"[TERMINAL LOG] AUTOCORRECTED INPUT: \"{corrected_text}\"")
+                    if censored_text != corrected_text:
+                        print(f"[TERMINAL LOG] SANITIZED INPUT: \"{censored_text}\"")
 
-                    print("[TERMINAL LOG] INDIVIDUAL MODEL OUTPUTS:") 
-                    for model_name, res in analysis["all_models"].items(): 
-                        pos_p = res.get("positive_prob", 0.0) 
-                        sent = res.get("sentiment", "N/A") 
-                        sarcasm_str = "" 
-                        if "is_sarcastic" in res: 
-                            sarcasm_str = f" | Sarcastic: {res['is_sarcastic']} (Prob: {res.get('sarcasm_prob', 0.0):.4f})" 
-                        print(f"  • {model_name:<25} -> Sentiment: {sent:<8} | Pos Prob: {pos_p:.4f}{sarcasm_str}") 
-                    print("=" * 60 + "\n") 
+                    print("-" * 60)
+                    print(f"[TERMINAL LOG] BEST MODEL SELECTED : {analysis['best_model_name']}")
+                    print(f"[TERMINAL LOG] CALIBRATED PROBABILITY: {analysis['positive_prob']:.4f}")
+                    print(f"[TERMINAL LOG]   RATING : {analysis['rating']}")
+                    print("-" * 60)
 
-                    new_review = { 
-                        "user": generate_username(), 
-                        "text": review_input.strip(), 
-                        "rating": analysis["rating"], 
-                        "badge_class": analysis["badge_class"], 
-                        "positive_prob": analysis["positive_prob"] 
-                    } 
+                    print("[TERMINAL LOG] INDIVIDUAL MODEL OUTPUTS:")
+                    for model_name, res in analysis["all_models"].items():
+                        pos_p = res.get("positive_prob", 0.0)
+                        sent = res.get("sentiment", "N/A")
+                        sarcasm_str = ""
+                        if "is_sarcastic" in res:
+                            sarcasm_str = f" | Sarcastic: {res['is_sarcastic']} (Prob: {res.get('sarcasm_prob', 0.0):.4f})"
+                        print(f"  • {model_name:<25} -> Sentiment: {sent:<8} | Pos Prob: {pos_p:.4f}{sarcasm_str}")
+                    print("=" * 60 + "\n")
 
-                    st.session_state.reviews_db[movie_id].insert(0, new_review) 
-                    st.rerun() 
+                    new_review = {
+                        "user": generate_username(),
+                        "text": censored_text,
+                        "rating": analysis["rating"],
+                        "badge_class": analysis["badge_class"],
+                        "positive_prob": analysis["positive_prob"]
+                    }
 
-        st.divider() 
+                    st.session_state.reviews_db[movie_id].insert(0, new_review)
+                    st.rerun()
 
-        if not movie_reviews: 
-            st.info("No reviews available for this movie yet.") 
-        else: 
-            for rev in movie_reviews: 
-                st.markdown( 
-                    f""" 
-                    <div class="review-card"> 
-                        <div class="review-header"> 
-                            <span class="reviewer-info">{rev['user']}</span> 
-                            <span class="badge {rev['badge_class']}">{rev['rating']}</span> 
-                        </div> 
-                        <div class="review-text">"{rev['text']}"</div> 
-                    </div> 
-                    """, 
-                    unsafe_allow_html=True, 
+        st.divider()
+
+        if not movie_reviews:
+            st.info("No reviews available for this movie yet.")
+        else:
+            for rev in movie_reviews:
+                st.markdown(
+                    f"""
+                    <div class="review-card">
+                        <div class="review-header">
+                            <span class="reviewer-info">{rev['user']}</span>
+                            <span class="badge {rev['badge_class']}">{rev['rating']}</span>
+                        </div>
+                        <div class="review-text">"{rev['text']}"</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
                 )
